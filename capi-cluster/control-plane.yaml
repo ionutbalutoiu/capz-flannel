@@ -1,0 +1,133 @@
+---
+apiVersion: cluster.x-k8s.io/v1alpha3
+kind: Cluster
+metadata:
+  name: ${CLUSTER_NAME}
+  namespace: default
+spec:
+  clusterNetwork:
+    pods:
+      cidrBlocks:
+      - 192.168.0.0/16
+  controlPlaneRef:
+    apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
+    kind: KubeadmControlPlane
+    name: ${CLUSTER_NAME}-control-plane
+  infrastructureRef:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
+    kind: AzureCluster
+    name: ${CLUSTER_NAME}
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
+kind: AzureCluster
+metadata:
+  name: ${CLUSTER_NAME}
+  namespace: default
+spec:
+  location: ${AZURE_LOCATION}
+  networkSpec:
+    vnet:
+      name: ${CLUSTER_NAME}-vnet
+  resourceGroup: ${CLUSTER_NAME}
+  subscriptionID: ${AZURE_SUBSCRIPTION_ID}
+---
+apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
+kind: KubeadmControlPlane
+metadata:
+  name: ${CLUSTER_NAME}-control-plane
+  namespace: default
+spec:
+  version: ${CI_VERSION}
+  replicas: 1
+  infrastructureTemplate:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
+    kind: AzureMachineTemplate
+    name: ${CLUSTER_NAME}-control-plane
+  kubeadmConfigSpec:
+    clusterConfiguration:
+      kubernetesVersion: ${CI_VERSION}
+      apiServer:
+        extraArgs:
+          cloud-config: /etc/kubernetes/azure.json
+          cloud-provider: azure
+        extraVolumes:
+        - hostPath: /etc/kubernetes/azure.json
+          mountPath: /etc/kubernetes/azure.json
+          name: cloud-config
+          readOnly: true
+        timeoutForControlPlane: 20m
+      controllerManager:
+        extraArgs:
+          allocate-node-cidrs: "true"
+          cloud-config: /etc/kubernetes/azure.json
+          cloud-provider: azure
+        extraVolumes:
+        - hostPath: /etc/kubernetes/azure.json
+          mountPath: /etc/kubernetes/azure.json
+          name: cloud-config
+          readOnly: true
+    files:
+    - content: |
+        {
+          "cloud": "AzurePublicCloud",
+          "tenantId": "${AZURE_TENANT_ID}",
+          "subscriptionId": "${AZURE_SUBSCRIPTION_ID}",
+          "aadClientId": "${AZURE_CLIENT_ID}",
+          "aadClientSecret": "${AZURE_CLIENT_SECRET}",
+          "resourceGroup": "${CLUSTER_NAME}",
+          "securityGroupName": "${CLUSTER_NAME}-node-nsg",
+          "location": "${AZURE_LOCATION}",
+          "vmType": "standard",
+          "vnetName": "${CLUSTER_NAME}-vnet",
+          "vnetResourceGroup": "${CLUSTER_NAME}",
+          "subnetName": "${CLUSTER_NAME}-node-subnet",
+          "routeTableName": "${CLUSTER_NAME}-node-routetable",
+          "userAssignedID": "${CLUSTER_NAME}",
+          "loadBalancerSku": "standard",
+          "maximumLoadBalancerRuleCount": 250,
+          "useManagedIdentityExtension": false,
+          "useInstanceMetadata": true
+        }
+      owner: root:root
+      path: /etc/kubernetes/azure.json
+      permissions: "0644"
+    initConfiguration:
+      nodeRegistration:
+        kubeletExtraArgs:
+          cloud-config: /etc/kubernetes/azure.json
+          cloud-provider: azure
+        name: '{{ ds.meta_data["local_hostname"] }}'
+    joinConfiguration:
+      nodeRegistration:
+        kubeletExtraArgs:
+          cloud-config: /etc/kubernetes/azure.json
+          cloud-provider: azure
+        name: '{{ ds.meta_data["local_hostname"] }}'
+    preKubeadmCommands:
+    - curl --fail -Lo /tmp/kubeadm-bootstrap.sh https://raw.githubusercontent.com/ionutbalutoiu/capz-flannel/master/scripts/kubeadm-bootstrap.sh
+    - chmod +x /tmp/kubeadm-bootstrap.sh
+    - bash -c "/tmp/kubeadm-bootstrap.sh ${CI_VERSION}"
+    useExperimentalRetryJoin: true
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
+kind: AzureMachineTemplate
+metadata:
+  name: ${CLUSTER_NAME}-control-plane
+  namespace: default
+spec:
+  template:
+    spec:
+      location: ${AZURE_LOCATION}
+      osDisk:
+        diskSizeGB: 128
+        managedDisk:
+          storageAccountType: Premium_LRS
+        osType: Linux
+      sshPublicKey: ${AZURE_SSH_PUBLIC_KEY_B64}
+      vmSize: ${AZURE_CONTROL_PLANE_MACHINE_TYPE}
+      image:
+        marketplace:
+          publisher: cncf-upstream
+          offer: capi
+          sku: k8s-1dot18dot3-ubuntu-1804
+          version: "2020.05.20"

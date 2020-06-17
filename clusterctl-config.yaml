@@ -1,0 +1,4 @@
+images:
+  infrastructure-azure:
+    repository: docker.io/ionutbalutoiu
+    tag: v0.4.4-windows

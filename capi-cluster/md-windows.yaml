@@ -1,0 +1,92 @@
+---
+apiVersion: cluster.x-k8s.io/v1alpha3
+kind: MachineDeployment
+metadata:
+  name: capi-win
+  namespace: default
+spec:
+  clusterName: ${CLUSTER_NAME}
+  replicas: 1
+  selector:
+    matchLabels: null
+  template:
+    spec:
+      version: ${CI_VERSION}
+      bootstrap:
+        configRef:
+          apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+          kind: KubeadmConfigTemplate
+          name: capi-win
+      clusterName: ${CLUSTER_NAME}
+      infrastructureRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
+        kind: AzureMachineTemplate
+        name: capi-win
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
+kind: AzureMachineTemplate
+metadata:
+  name: capi-win
+  namespace: default
+spec:
+  template:
+    spec:
+      location: ${AZURE_LOCATION}
+      osDisk:
+        diskSizeGB: 50
+        managedDisk:
+          storageAccountType: Premium_LRS
+        osType: Windows
+      sshPublicKey: ${AZURE_SSH_PUBLIC_KEY_B64}
+      vmSize: ${AZURE_WINDOWS_NODE_MACHINE_TYPE}
+      image:
+        sharedGallery:
+          gallery: ${AZURE_WINDOWS_NODE_IMAGE_GALLERY}
+          subscriptionID: ${AZURE_SUBSCRIPTION_ID}
+          resourceGroup: ${AZURE_WINDOWS_NODE_IMAGE_RG}
+          name: ${AZURE_WINDOWS_NODE_IMAGE_DEFINITION}
+          version: ${AZURE_WINDOWS_NODE_IMAGE_VERSION}
+---
+apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+kind: KubeadmConfigTemplate
+metadata:
+  name: capi-win
+  namespace: default
+spec:
+  template:
+    spec:
+      files:
+      - content: |
+          {
+            "cloud": "AzurePublicCloud",
+            "tenantId": "${AZURE_TENANT_ID}",
+            "subscriptionId": "${AZURE_SUBSCRIPTION_ID}",
+            "aadClientId": "${AZURE_CLIENT_ID}",
+            "aadClientSecret": "${AZURE_CLIENT_SECRET}",
+            "resourceGroup": "${CLUSTER_NAME}",
+            "securityGroupName": "${CLUSTER_NAME}-node-nsg",
+            "location": "${AZURE_LOCATION}",
+            "vmType": "standard",
+            "vnetName": "${CLUSTER_NAME}-vnet",
+            "vnetResourceGroup": "${CLUSTER_NAME}",
+            "subnetName": "${CLUSTER_NAME}-node-subnet",
+            "routeTableName": "${CLUSTER_NAME}-node-routetable",
+            "loadBalancerSku": "standard",
+            "maximumLoadBalancerRuleCount": 250,
+            "useManagedIdentityExtension": false,
+            "useInstanceMetadata": true
+          }
+        owner: root:root
+        path: /etc/kubernetes/azure.json
+        permissions: "0644"
+      joinConfiguration:
+        nodeRegistration:
+          kubeletExtraArgs:
+            cloud-config: /etc/kubernetes/azure.json
+            cloud-provider: azure
+          name: '{{ v1.local_hostname }}'
+      preKubeadmCommands:
+      - curl.exe --fail -Lo /tmp/ssh-setup.ps1 https://raw.githubusercontent.com/ionutbalutoiu/capz-flannel/master/scripts/ssh-setup.ps1
+      - powershell -C "/tmp/ssh-setup.ps1 -SSHPublicKey '${AZURE_SSH_PUBLIC_KEY}'"
+      - curl.exe --fail -Lo /tmp/kubeadm-bootstrap.ps1 https://raw.githubusercontent.com/ionutbalutoiu/capz-flannel/master/scripts/kubeadm-bootstrap.ps1
+      - powershell -C "/tmp/kubeadm-bootstrap.ps1 -CIVersion ${CI_VERSION}"
